@@ -48,7 +48,6 @@ class SumoEnvironment(gym.Env):
         use_gui: bool = False,
         begin_time: int = 0,
         num_seconds: int = 3600,
-        green_time: int = 90,
         yellow_time: int = 3,
         all_red_time: int = 2,
         reward_fn: Union[str, Callable] = "diff-waiting-time",
@@ -60,7 +59,7 @@ class SumoEnvironment(gym.Env):
         time_to_teleport: int = -1,
         sumo_warnings: bool = True,
     ):
-
+        
         super().__init__()
 
         # ====================================================
@@ -84,21 +83,14 @@ class SumoEnvironment(gym.Env):
         # Traffic signal timing
         # ====================================================
 
-        if green_time <= 0:
-            raise ValueError("green_time must be > 0")
-
         if yellow_time < 0:
             raise ValueError("yellow_time must be >= 0")
 
         if all_red_time < 0:
             raise ValueError("all_red_time must be >= 0")
 
-        self.green_time = green_time
         self.yellow_time = yellow_time
         self.all_red_time = all_red_time
-
-        # 一個完整 decision epoch 的時間
-        self.epoch_time = self.green_time + self.yellow_time + self.all_red_time
 
         # ====================================================
         # RL settings
@@ -133,7 +125,6 @@ class SumoEnvironment(gym.Env):
 
         # ====================================================
         # 暫時啟動 SUMO
-        #
         # 用途：
         # 1. 找 traffic signal
         # 2. 建立 observation_space
@@ -173,13 +164,8 @@ class SumoEnvironment(gym.Env):
         self.traffic_signal = TrafficSignal(
             env=self,
             ts_id=self.ts_id,
-            green_time=self.green_time,
-            yellow_time=self.yellow_time,
-            all_red_time=self.all_red_time,
-            begin_time=self.begin_time,
             reward_fn=self.reward_fn,
-            sumo=traci,
-        )
+            sumo=traci,)
 
         self.observation_space = self.traffic_signal.observation_space
         self.action_space = self.traffic_signal.action_space
@@ -201,8 +187,7 @@ class SumoEnvironment(gym.Env):
             "-r", self.route_file,
             "--max-depart-delay", str(self.max_depart_delay),
             "--waiting-time-memory", str(self.waiting_time_memory),
-            "--time-to-teleport", str(self.time_to_teleport),
-        ]
+            "--time-to-teleport", str(self.time_to_teleport),]
 
         if self.begin_time > 0:
             sumo_cmd.extend(["-b", str(self.begin_time)])
@@ -246,10 +231,6 @@ class SumoEnvironment(gym.Env):
         self.traffic_signal = TrafficSignal(
             env=self,
             ts_id=self.ts_id,
-            green_time=self.green_time,
-            yellow_time=self.yellow_time,
-            all_red_time=self.all_red_time,
-            begin_time=self.begin_time,
             reward_fn=self.reward_fn,
             sumo=self.sumo,
         )
@@ -300,20 +281,19 @@ class SumoEnvironment(gym.Env):
         return observation, info
 
 
-    # ========================================================
     # Step
-    # ========================================================
-
     def step(self, action: int):
 
         if not self.action_space.contains(action):
             raise ValueError(f"Invalid action: {action}")
 
+        # action 決定這個phase的綠燈秒數
         green_time = self.traffic_signal.get_green_duration(action)
 
-        # 目前固定輪到的 phase
+        # 固定順序的 current phase
         self.traffic_signal.set_green()
 
+        # 讓目前 phase 持續 duration 秒。
         self._run_for(green_time)
 
         if self.sim_step < self.sim_max_time:
@@ -323,41 +303,41 @@ class SumoEnvironment(gym.Env):
         if self.sim_step < self.sim_max_time:
             self.traffic_signal.set_all_red()
             self._run_for(self.all_red_time)
+
+        # 剛才的 phase 正式完成服務， 切換到下一個phase (我只是先切換到下一個phase， 動作是決定切換到下一個phase的時間持續多少秒)
+        self.traffic_signal.complete_current_phase()
         
-        # 下一個 epoch 固定切到下一個 phase
-        self.traffic_signal.next_phase()
-        
+        # 取得 S(t+1)
         observation = self.traffic_signal.compute_observation()
+
+        # 取得 R(t+1)
         reward = self.traffic_signal.compute_reward()
 
         terminated = False
-        truncated = self.sim_step >= self.sim_max_time
-
+        
+        truncated =  self.sim_step >= self.sim_max_time 
         info = self._compute_info()
 
         return observation, reward, terminated, truncated, info
-    # ========================================================
-    # Run SUMO for given duration
-    # ========================================================
-
+    
     def _run_for(self, duration: int):
 
         """
         讓目前 phase 持續 duration 秒。
         """
-
         target_time = min(self.sim_step + duration, self.sim_max_time)
 
         while self.sim_step < target_time:
+            if self.sumo.simulation.getMinExpectedNumber() <= 0:
+                break
+
             self._sumo_step()
 
-
-    # ========================================================
     # One SUMO simulation step
-    # ========================================================
-
     def _sumo_step(self):
-
+        """
+        模擬跑一秒。
+        """
         self.sumo.simulationStep()
 
         self.num_arrived_vehicles += self.sumo.simulation.getArrivedNumber()
@@ -365,20 +345,13 @@ class SumoEnvironment(gym.Env):
         self.num_teleported_vehicles += self.sumo.simulation.getEndingTeleportNumber()
 
 
-    # ========================================================
-    # Current SUMO time
-    # ========================================================
 
+    # Current SUMO time
     @property
     def sim_step(self):
-
         return self.sumo.simulation.getTime()
 
-
-    # ========================================================
     # Evaluation metrics
-    # ========================================================
-
     def _compute_info(self):
 
         vehicles = self.sumo.vehicle.getIDList()
@@ -402,21 +375,14 @@ class SumoEnvironment(gym.Env):
         }
 
 
-    # ========================================================
     # Close SUMO
-    # ========================================================
-
     def close(self):
 
         if self.sumo is not None:
             traci.close()
             self.sumo = None
 
-
-    # ========================================================
     # Destructor
-    # ========================================================
-
     def __del__(self):
 
         self.close()

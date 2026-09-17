@@ -15,16 +15,12 @@ from gymnasium import spaces
 
 class TrafficSignal:
 
-    MIN_GAP = 2.5
+    #MIN_GAP = 2.5
 
     def __init__(
         self,
         env,
         ts_id: str,
-        green_time: int,
-        yellow_time: int,
-        all_red_time: int,
-        begin_time: int,
         reward_fn: Union[str, Callable],
         sumo,
     ):
@@ -33,51 +29,39 @@ class TrafficSignal:
         self.env = env
         self.sumo = sumo
 
-        self.green_time = green_time
-        self.yellow_time = yellow_time
-        self.all_red_time = all_red_time
-        self.begin_time = begin_time
-
+        self._build_phases() # code 81
         # 最近一次執行的 Green action
-        self.green_phase = 0
+        self.green_phase = 0 # t=0 從 phase 0 開始執行
+        self.previous_phase = self.num_green_phases - 1 # t-1 時是在哪個phase
+        current_time = float(self.sumo.simulation.getTime()) # 目前模擬時間是從模擬開始後的多少秒
+        self.last_served_time = [current_time] * self.num_green_phases #
+        self._build_phase_lanes()
 
-        self.last_ts_waiting_time = 0.0
+        self.last_ts_waiting_time = 0.0 
+
         self.last_reward = None
-
         self.reward_fn = self._get_reward_fn_from_string(reward_fn)
 
-        self._build_phases()
 
         # Incoming lanes
-        self.lanes = list(
-            dict.fromkeys(
-                self.sumo.trafficlight.getControlledLanes(self.id)
-            )
-        )
+        self.lanes = list(dict.fromkeys(self.sumo.trafficlight.getControlledLanes(self.id)))
 
         # Outgoing lanes
         controlled_links = self.sumo.trafficlight.getControlledLinks(self.id)
 
-        self.out_lanes = [
-            link[0][1]
-            for link in controlled_links
-            if link
-        ]
+        self.out_lanes = [link[0][1] for link in controlled_links if link]
 
         self.out_lanes = list(set(self.out_lanes))
 
         all_lanes = list(set(self.lanes + self.out_lanes))
 
-        self.lanes_length = {
-            lane: self.sumo.lane.getLength(lane)
-            for lane in all_lanes
-        }
+        self.lanes_length = {lane: self.sumo.lane.getLength(lane) for lane in all_lanes}
 
         # Observation
         self.observation_fn = self.env.observation_class(self)
         self.observation_space = self.observation_fn.observation_space()
 
-        # Action = choose Green phase
+        # Action = choose Green duration
         self.green_durations = [30, 45, 60, 75, 90]
         self.action_space = spaces.Discrete(len(self.green_durations))
 
@@ -100,10 +84,7 @@ class TrafficSignal:
 
             has_yellow = "y" in state or "Y" in state
 
-            all_stopped = all(
-                signal in ("r", "R", "s")
-                for signal in state
-            )
+            all_stopped = all( signal in ("r", "R", "s") for signal in state )
 
             if not has_yellow and not all_stopped:
                 self.green_phases.append(state)
@@ -111,24 +92,76 @@ class TrafficSignal:
         self.num_green_phases = len(self.green_phases)
 
         if self.num_green_phases == 0:
-            raise RuntimeError(
-                f"No green phase found for traffic light {self.id}."
-            )
+            raise RuntimeError(f"No green phase found for traffic light {self.id}.")
 
         state_length = len(self.green_phases[0])
 
         self.all_red_state = "r" * state_length
 
+    def _build_phase_lanes(self):
 
-    # ========================================================
+        controlled_links = self.sumo.trafficlight.getControlledLinks(self.id) #
+
+        self.phase_lanes = []
+
+        for phase_state in self.green_phases:
+
+            lanes = []
+
+            for signal_index, signal_state in enumerate(phase_state):
+
+                if signal_state in ("G", "g"):
+
+                    links = controlled_links[signal_index]
+
+                    for link in links:
+
+                        incoming_lane = link[0]
+
+                        if incoming_lane not in lanes:
+                            lanes.append(incoming_lane)
+
+            self.phase_lanes.append(lanes)
+
+    def get_phase_queues(self): # Qpk
+
+        phase_queues = []
+
+        for lanes in self.phase_lanes:
+
+            queue = sum(self.sumo.lane.getLastStepHaltingNumber(lane) for lane in lanes)
+
+            phase_queues.append(float(queue))
+
+        return phase_queues
+    
+
+    def get_phase_elapsed_times(self): # Cpk
+
+        current_time = float(self.sumo.simulation.getTime())
+
+        elapsed_times = [current_time - last_time for last_time in self.last_served_time]
+
+        return elapsed_times
+    
+
+    def complete_current_phase(self): # 目前的phase跑完，先切換到下一個phase做準備
+
+        current_time = float(self.sumo.simulation.getTime())
+
+        self.previous_phase = self.green_phase
+
+        self.last_served_time[self.green_phase] = current_time
+
+        self.green_phase = (self.green_phase + 1) % self.num_green_phases # 剛才的 phase 結束， 切換到下一個phase
+
     # Green
-    # ========================================================
-
-    def set_green(self):
+    def set_green(self): 
 
         green_state = self.green_phases[self.green_phase]
 
         self.sumo.trafficlight.setRedYellowGreenState(self.id, green_state)
+
 
     def get_green_duration(self, action: int):
 
@@ -139,14 +172,8 @@ class TrafficSignal:
 
         return self.green_durations[action]
 
-    def next_phase(self):
 
-        self.green_phase = (self.green_phase + 1) % self.num_green_phases
-
-    # ========================================================
     # Yellow
-    # ========================================================
-
     def set_yellow(self):
 
         current_green_state = self.green_phases[self.green_phase]
@@ -161,94 +188,61 @@ class TrafficSignal:
             else:
                 yellow_state += "r"
 
-        self.sumo.trafficlight.setRedYellowGreenState(
-            self.id,
-            yellow_state,
-        )
+        self.sumo.trafficlight.setRedYellowGreenState(self.id, yellow_state,)
 
 
-    # ========================================================
+
     # All Red
-    # ========================================================
-
     def set_all_red(self):
-
-        self.sumo.trafficlight.setRedYellowGreenState(
-            self.id,
-            self.all_red_state,
-        )
+        self.sumo.trafficlight.setRedYellowGreenState(self.id, self.all_red_state,)
 
 
-    # ========================================================
     # Observation
-    # ========================================================
-
     def compute_observation(self):
-
         return self.observation_fn()
 
 
-    # ========================================================
     # Reward
-    # ========================================================
-
     def compute_reward(self):
-
         self.last_reward = self.reward_fn(self)
-
         return self.last_reward
 
 
     def _get_reward_fn_from_string(self, reward_fn):
 
         if isinstance(reward_fn, str):
-
             if reward_fn not in self.reward_fns:
-                raise NotImplementedError(
-                    f"Reward function '{reward_fn}' is not implemented."
-                )
+                raise NotImplementedError(f"Reward function '{reward_fn}' is not implemented.")
 
             return self.reward_fns[reward_fn]
-
         return reward_fn
 
 
     def initialize_reward_baseline(self):
 
-        self.last_ts_waiting_time = (
-            sum(self.get_accumulated_waiting_time_per_lane()) / 100.0
-        )
+        self.last_ts_waiting_time = (sum(self.get_accumulated_waiting_time_per_lane()) / 100.0)
 
 
-    # ========================================================
     # Rewards
-    # ========================================================
-
     def _pressure_reward(self):
-
         return self.get_pressure()
 
 
     def _average_speed_reward(self):
-
         return self.get_average_speed()
 
 
     def _queue_reward(self):
-
         return -self.get_total_queued()
 
 
     def _co2_reward(self):
-
         return -self.get_total_co2()
 
 
     def _diff_waiting_time_reward(self):
 
-        ts_wait = (
-            sum(self.get_accumulated_waiting_time_per_lane()) / 100.0
-        )
+        ts_wait = (sum(self.get_accumulated_waiting_time_per_lane()) / 100.0)
 
         reward = self.last_ts_waiting_time - ts_wait
 
@@ -352,34 +346,27 @@ class TrafficSignal:
     # Density
     # ========================================================
 
-    def get_out_lanes_density(self) -> List[float]:
+    #def get_out_lanes_density(self) -> List[float]:
 
         return self._get_density(self.out_lanes)
 
 
-    def get_lanes_density(self) -> List[float]:
+    #def get_lanes_density(self) -> List[float]:
 
         return self._get_density(self.lanes)
 
 
-    def _get_density(self, lanes):
+    #def _get_density(self, lanes):
 
         densities = []
 
         for lane in lanes:
 
-            vehicle_number = (
-                self.sumo.lane.getLastStepVehicleNumber(lane)
-            )
+            vehicle_number = (self.sumo.lane.getLastStepVehicleNumber(lane))
 
-            vehicle_length = (
-                self.sumo.lane.getLastStepLength(lane)
-            )
+            vehicle_length = (self.sumo.lane.getLastStepLength(lane))
 
-            capacity = (
-                self.lanes_length[lane]
-                / (self.MIN_GAP + vehicle_length)
-            )
+            capacity = (self.lanes_length[lane]/ (self.MIN_GAP + vehicle_length))
 
             if capacity <= 0:
                 density = 0.0
@@ -391,11 +378,9 @@ class TrafficSignal:
         return densities
 
 
-    # ========================================================
     # Queue
-    # ========================================================
 
-    def get_lanes_queue(self) -> List[float]:
+    #def get_lanes_queue(self) -> List[float]:
 
         queues = []
 
@@ -426,10 +411,7 @@ class TrafficSignal:
 
     def get_total_queued(self) -> int:
 
-        return sum(
-            self.sumo.lane.getLastStepHaltingNumber(lane)
-            for lane in self.lanes
-        )
+        return sum(self.sumo.lane.getLastStepHaltingNumber(lane)for lane in self.lanes)
 
 
     # ========================================================

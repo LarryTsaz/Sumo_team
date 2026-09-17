@@ -7,7 +7,6 @@ env = SumoEnvironment(
     route_file=r"C:\Traffic_project\SUMO_RL\sumo-rl\sumo_rl\nets\2way-single-intersection\single-intersection-vhvh.rou.xml",
     use_gui=True,
     num_seconds=3600,
-    green_time=45,
     yellow_time=3,
     all_red_time=2,
 )
