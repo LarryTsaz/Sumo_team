@@ -50,7 +50,7 @@ class SumoEnvironment(gym.Env):
         num_seconds: int = 3600,
         yellow_time: int = 3,
         all_red_time: int = 2,
-        reward_fn: Union[str, Callable] = "diff-waiting-time",
+        reward_fn: Union[str, Callable] = "queue-starvation",
         observation_class: type[ObservationFunction] = DefaultObservationFunction,
         sumo_seed: Union[str, int] = "random",
         ts_id: Optional[str] = None,

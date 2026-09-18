@@ -62,7 +62,7 @@ class TrafficSignal:
         self.observation_space = self.observation_fn.observation_space()
 
         # Action = choose Green duration
-        self.green_durations = [30, 45, 60, 75, 90]
+        self.green_durations = [30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85, 90]
         self.action_space = spaces.Discrete(len(self.green_durations))
 
 
@@ -250,6 +250,21 @@ class TrafficSignal:
 
         return reward
 
+    def _queue_starvation_reward(self):
+
+        phase_queues = self.get_phase_queues()
+        elapsed_times = self.get_phase_elapsed_times()
+
+        total_queue = sum(phase_queues)
+
+        starvation_threshold = 180.0
+        starvation_weight = 0.1
+
+        starvation_penalty = sum(max(0.0, elapsed_time - starvation_threshold) for elapsed_time in elapsed_times)
+
+        reward = (-total_queue - starvation_weight * starvation_penalty)
+
+        return reward
 
     # ========================================================
     # Waiting time
@@ -457,6 +472,7 @@ class TrafficSignal:
 
     reward_fns = {
         "diff-waiting-time": _diff_waiting_time_reward,
+        "queue-starvation": _queue_starvation_reward,
         "average-speed": _average_speed_reward,
         "queue": _queue_reward,
         "pressure": _pressure_reward,
