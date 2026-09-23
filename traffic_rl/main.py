@@ -3,10 +3,16 @@ from traffic_rl.environment.env import SumoEnvironment
 from traffic_rl.algorithm.ocba_dqn import OCBADQNAgent
 import matplotlib.pyplot as plt
 import numpy as np
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+NETWORK_DIR = Path(__file__).resolve().parent / "nets" / "2way-single-intersection"
+MODEL_PATH = PROJECT_ROOT / "ocba_dqn_model.pth"
 
 env = SumoEnvironment(
-    net_file=r"C:\Traffic_project\SUMO_RL\sumo-rl\sumo_rl\nets\2way-single-intersection\single-intersection.net.xml",
-    route_file=r"C:\Traffic_project\SUMO_RL\sumo-rl\sumo_rl\nets\2way-single-intersection\single-intersection-vhvh.rou.xml",
+    net_file=str(NETWORK_DIR / "single-intersection.net.xml"),
+    route_file=str(NETWORK_DIR / "single-intersection-vhvh.rou.xml"),
     use_gui=False,
     num_seconds=3600,
     yellow_time=3,
@@ -29,7 +35,7 @@ agent = OCBADQNAgent(
     tau=0.01,
 )
 
-agent.load("ocba_dqn_model.pth")
+agent.load(str(MODEL_PATH))
 
 print("Loaded previous model.")
 print("Current epsilon:", agent.epsilon)
@@ -99,7 +105,7 @@ for episode in range( start_episode, start_episode + num_episodes ):
         f"Avg Loss: {avg_loss if avg_loss is not None else 'N/A'}"
     )
 
-agent.save("ocba_dqn_model.pth")
+agent.save(str(MODEL_PATH))
 
 env.close()
 

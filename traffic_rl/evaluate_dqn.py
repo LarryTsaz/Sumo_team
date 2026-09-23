@@ -1,10 +1,17 @@
 from traffic_rl.environment.env import SumoEnvironment
 from traffic_rl.algorithm.vanilla_dqn import DQNAgent
 from traffic_rl.algorithm.ocba_dqn import OCBADQNAgent
+from pathlib import Path
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+NETWORK_DIR = Path(__file__).resolve().parent / "nets" / "2way-single-intersection"
+OCBA_MODEL_PATH = PROJECT_ROOT / "ocba_dqn_model.pth"
+VANILLA_MODEL_PATH = PROJECT_ROOT / "vanilla_dqn_model.pth"
 
 env = SumoEnvironment(
-    net_file=r"C:\Traffic_project\SUMO_RL\sumo-rl\sumo_rl\nets\2way-single-intersection\single-intersection.net.xml",
-    route_file=r"C:\Traffic_project\SUMO_RL\sumo-rl\sumo_rl\nets\2way-single-intersection\single-intersection-vhvh.rou.xml",
+    net_file=str(NETWORK_DIR / "single-intersection.net.xml"),
+    route_file=str(NETWORK_DIR / "single-intersection-vhvh.rou.xml"),
     use_gui=True,
     num_seconds=3600,
     yellow_time=3,
@@ -16,8 +23,8 @@ action_dim = env.action_space.n
 
 agent = OCBADQNAgent(state_dim=state_dim, action_dim=action_dim)
 #agent = DQNAgent(state_dim=state_dim, action_dim=action_dim)
-agent.load("ocba_dqn_model.pth")
-#agent.load("vanilla_dqn_model.pth")
+agent.load(str(OCBA_MODEL_PATH))
+#agent.load(str(VANILLA_MODEL_PATH))
 
 state, info = env.reset()
 
